@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+  <meta charset="UTF-8" />
+  <title>וידאו זז עם גלילה</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: white;
+      font-family: Arial, sans-serif;
+      direction: rtl;
+      height: 100vh;
+      overflow: hidden; /* שלא תהיה גלילה של הדף עצמו */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #scrollVideo {
+      max-width: 90vw;
+      max-height: 90vh;
+      display: block;
+      background: black;
+      box-shadow: 0 0 30px rgba(0,0,0,0.6);
+    }
+
+    .hint {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.6);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="hint">גללי עם הגלגלת – הווידאו זז קדימה ואחורה</div>
+
+  <!-- רק הווידאו עצמו במרכז המסך -->
+  <video id="scrollVideo" src="rust.mp4" preload="auto"></video>
+
+  <script>
+    const video = document.getElementById('scrollVideo');
+
+    let videoDuration = 0;
+    let t = 0; // בין 0 ל-1: איפה אנחנו בזמן של הווידאו
+
+    // ברגע שהווידאו נטען – שומרים את האורך ועוצרים
+    video.addEventListener('loadedmetadata', () => {
+      videoDuration = video.duration;
+      video.pause();
+      video.currentTime = 0;
+    });
+
+    // גלגלת עכבר שולטת בזמן של הווידאו
+    window.addEventListener('wheel', (e) => {
+      if (!videoDuration) return;
+
+      e.preventDefault(); // שלא יגלול את הדף
+
+      // deltaY>0 = גלילה למטה (קדימה), deltaY<0 = גלילה למעלה (אחורה)
+      t += e.deltaY * 0.001; // אפשר לשחק עם המהירות (0.001)
+      // מגבילים בין 0 ל-1
+      t = Math.min(Math.max(t, 0), 1);
+
+      video.currentTime = t * videoDuration;
+    }, { passive: false });
+  </script>
+
+</body>
+</html>
