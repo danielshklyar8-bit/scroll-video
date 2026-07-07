@@ -5,12 +5,14 @@ const PERSON_TINT = '#CFCFCF'; // stand-in body colour used only in ?demo mode (
 const BURN_PINK = '#FF2E88';   // hot, "painful" pink used for the jellyfish burn
 const BURN_RED = '#FF2A1E';    // red-hot core of the burn
 
-const SAMPLE = 4;      // grid step used to sample the body outline
+const SAMPLE = 3;      // grid step used to sample the body outline (finer = fuller figure)
 const SQUARE = SAMPLE; // drawn square size for silhouette cells (demo person / dissolve)
 
 // --- Segmentation / tracking ---
-const SEGMENT_INTERVAL = 90;  // ms between BodyPix calls
-const SMOOTHING = 0.28;       // body-center + cell smoothing
+const SEGMENT_INTERVAL = 80;         // ms between BodyPix calls
+const SMOOTHING = 0.28;              // body-center + cell smoothing
+const SEG_INTERNAL_RESOLUTION = 'high'; // 'medium' | 'high' | 'full' — raise to 'full' for max fidelity (slower)
+const SEG_THRESHOLD = 0.55;          // lower => captures more of the body (fewer dropouts)
 
 // --- Catch game tuning ---
 const GAME_DIFFICULTY_RAMP = 70000; // ms to reach max difficulty (gentler ramp)
@@ -237,10 +239,16 @@ async function setupCamera(){
 }
 
 async function loadModel(){
+  // ResNet50 gives noticeably better body segmentation; fall back to the
+  // most accurate MobileNet config, then to defaults, on weaker devices.
   try{
-    net = await bodyPix.load({ architecture: 'MobileNetV1', outputStride: 16, multiplier: 0.75, quantBytes: 2 });
+    net = await bodyPix.load({ architecture: 'ResNet50', outputStride: 16, quantBytes: 2 });
   }catch(e){
-    net = await bodyPix.load();
+    try{
+      net = await bodyPix.load({ architecture: 'MobileNetV1', outputStride: 16, multiplier: 1.0, quantBytes: 2 });
+    }catch(e2){
+      net = await bodyPix.load();
+    }
   }
 }
 
@@ -266,7 +274,7 @@ function sampleSilhouette(segmentation){
             if(nx >= 0 && nx < width && ny >= 0 && ny < height && data[ny * width + nx] === 1) neighbors++;
           }
         }
-        if(neighbors < 3) continue;
+        if(neighbors < 2) continue; // gentle denoise only; keep thin limbs/edges
         const gx = Math.floor(x / SAMPLE);
         const gy = Math.floor(y / SAMPLE);
         const cx = width - (gx * SAMPLE + SAMPLE / 2); // mirror X (selfie view)
@@ -843,7 +851,7 @@ function updatePersonPresence(segmentation){
   }
   const areaRatio = areaCount / ((width * height) / 16);
   const boxWidth = maxX - minX, boxHeight = maxY - minY;
-  const isLargeEnough = areaRatio > 0.02 && boxWidth > width * 0.2 && boxHeight > height * 0.28;
+  const isLargeEnough = areaRatio > 0.015 && boxWidth > width * 0.18 && boxHeight > height * 0.25;
 
   if(isLargeEnough){
     if(!personDetected){ personDetected = true; startGame(performance.now()); }
@@ -988,9 +996,11 @@ async function segmentationLoop(){
     if(net && video && video.readyState >= 2){
       try{
         const segmentation = await net.segmentPerson(video, {
-          internalResolution: 'medium',
-          segmentationThreshold: 0.7,
-          maxDetections: 1
+          internalResolution: SEG_INTERNAL_RESOLUTION,
+          segmentationThreshold: SEG_THRESHOLD,
+          maxDetections: 1,
+          scoreThreshold: 0.3,
+          nmsRadius: 20
         });
         hands = getHandsFromPoses(segmentation.allPoses);
         updatePersonPresence(segmentation);
