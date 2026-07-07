@@ -1,7 +1,8 @@
 const ORANGE = '#FAA300';
 const PINK = '#FF64CB';
 const BACKGROUND = '#FFFFFF';
-const PERSON_TINT = '#CFCFCF'; // stand-in body colour used only in ?demo mode (no webcam)
+const PERSON_TINT = '#F4C95D';                   // soft-yellow stand-in body (used only in ?demo mode)
+const PERSON_LIVE_TINT = 'rgba(250,163,0,0.32)'; // light warm tint over the real webcam person
 const BURN_PINK = '#FF2E88';   // hot, "painful" pink used for the jellyfish burn
 const BURN_RED = '#FF2A1E';    // red-hot core of the burn
 
@@ -15,14 +16,14 @@ const SEG_INTERNAL_RESOLUTION = 'high'; // 'medium' | 'high' | 'full' — raise 
 const SEG_THRESHOLD = 0.55;          // lower => captures more of the body (fewer dropouts)
 
 // --- Catch game tuning ---
-const GAME_DIFFICULTY_RAMP = 70000; // ms to reach max difficulty (gentler ramp)
-const EMIT_INTERVAL_START = 800;    // ms between block bursts at the start
-const EMIT_INTERVAL_END = 280;      // ms between block bursts at max difficulty
-const BLOCK_SPEED_MIN = 1.2;        // outward speed at easy difficulty
-const BLOCK_SPEED_MAX = 2.6;        // outward speed at max difficulty
-const CATCH_RADIUS = 72;            // how close a hand must be to grab a block (forgiving)
-const MAGNET_RADIUS = 130;          // nearby hand gently attracts blocks so catching feels intuitive
-const MAGNET_PULL = 0.4;            // strength of that magnet assist
+const GAME_DIFFICULTY_RAMP = 80000; // ms to reach max difficulty (gentle)
+const EMIT_INTERVAL_START = 950;    // ms between block bursts at the start
+const EMIT_INTERVAL_END = 420;      // ms between block bursts at max difficulty
+const BLOCK_SPEED_MIN = 0.85;       // slow — every block is catchable before it reaches the edge
+const BLOCK_SPEED_MAX = 1.9;        // outward speed at max difficulty
+const CATCH_RADIUS = 90;            // generous grab radius
+const MAGNET_RADIUS = 180;          // nearby hand strongly attracts blocks so catching is reliable
+const MAGNET_PULL = 0.55;           // strength of that magnet assist
 const ABSORB_RADIUS = 26;           // distance to body center where a caught block is absorbed
 const CAUGHT_PULL = 0.45;           // acceleration of a caught block back toward the body
 const CAUGHT_FRICTION = 0.88;       // damping while reeling a caught block in
@@ -30,11 +31,13 @@ const CAUGHT_FRICTION = 0.88;       // damping while reeling a caught block in
 // --- Pink "jellyfish" escalation (triggered when a block escapes the frame) ---
 const PINK_FLASH_MIN = 900;         // ms
 const PINK_FLASH_MAX = 1400;        // ms
-const MIN_PINK_SPAWN = 0.03;        // per-frame spawn chance right after the first escape
-const MAX_PINK_SPAWN = 0.20;        // per-frame spawn chance after full escalation
+const MIN_PINK_SPAWN = 0.02;        // per-frame spawn chance right after the first escape
+const MAX_PINK_SPAWN = 0.09;        // per-frame spawn chance after full escalation
 const PINK_ESCALATION_DURATION = 16000;
+const PINK_MAX = 16;                // cap so the jellyfish never flood the whole screen
 
-// --- Dissolve end-phase (person disintegrates), kept from the original piece ---
+// --- Dissolve end-phase (disabled): no more tiny squares scattering after 35s ---
+const ENABLE_DISSOLVE = false;
 const DISSOLVE_START = 35000;
 const DISSOLVE_RAMP = 16000;
 const DISSOLVE_BASE_RATE = 0.0015;
@@ -323,7 +326,7 @@ function getHandsFromPoses(poses){
   for(const pose of poses){
     if(!pose.keypoints) continue;
     for(const kp of pose.keypoints){
-      if((kp.part === 'leftWrist' || kp.part === 'rightWrist') && kp.score > 0.25){
+      if((kp.part === 'leftWrist' || kp.part === 'rightWrist') && kp.score > 0.15){
         out.push({ x: width - kp.position.x, y: kp.position.y }); // mirror X to match the flipped view
       }
     }
@@ -368,6 +371,10 @@ function drawPerson(){
   personCtx.globalCompositeOperation = 'destination-in';
   personCtx.drawImage(maskCanvas, 0, 0);                     // keep only the person
   personCtx.restore();
+  // light warm tint over the person so it reads a bit yellow (like the original piece)
+  personCtx.globalCompositeOperation = 'source-atop';
+  personCtx.fillStyle = PERSON_LIVE_TINT;
+  personCtx.fillRect(0, 0, width, height);
   personCtx.globalCompositeOperation = 'source-over';
   ctx.drawImage(personCanvas, 0, 0);
 }
@@ -460,10 +467,10 @@ function onBlockEscaped(now){
     pinkEnabled = true;
     pinkPhaseStart = now;
   }
-  // every escape sends an extra burst of jellyfish
+  // every escape sends a small burst of jellyfish (capped so they never flood)
   if(pinkEnabled){
-    const burst = 1 + Math.min(3, Math.floor(escapes / 3));
-    for(let k = 0; k < burst; k++) spawnPink();
+    const burst = 1 + Math.min(2, Math.floor(escapes / 6));
+    for(let k = 0; k < burst && pinks.length < PINK_MAX; k++) spawnPink();
   }
 }
 
@@ -555,6 +562,7 @@ function updateDissolveParticles(dt){
 }
 
 function updateDissolve(now, dt){
+  if(!ENABLE_DISSOLVE) return; // the "shatter into tiny squares" phase is turned off
   if(!pinkPhaseStart || !silhouettePoints.length){ updateDissolveParticles(dt); return; }
   const elapsed = now - pinkPhaseStart;
   if(elapsed > DISSOLVE_START){
@@ -964,7 +972,7 @@ function frame(){
     const emitInterval = EMIT_INTERVAL_START + (EMIT_INTERVAL_END - EMIT_INTERVAL_START) * difficulty;
     if(now - lastEmit > emitInterval){
       lastEmit = now;
-      const count = 1 + Math.floor(difficulty * 1.6 + Math.random() * 0.6);
+      const count = 1 + Math.floor(difficulty * 1.0 + Math.random() * 0.4);
       for(let k = 0; k < count; k++) emitBlock(difficulty);
     }
 
@@ -978,7 +986,7 @@ function frame(){
     if(pinkEnabled && pinkPhaseStart){
       const phase = Math.min(1, (now - pinkPhaseStart) / PINK_ESCALATION_DURATION);
       const spawnChance = MIN_PINK_SPAWN + (MAX_PINK_SPAWN - MIN_PINK_SPAWN) * phase;
-      if(Math.random() < spawnChance) spawnPink();
+      if(pinks.length < PINK_MAX && Math.random() < spawnChance) spawnPink();
     }
     updatePinks(dt);
     drawPinks();
