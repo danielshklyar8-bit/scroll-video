@@ -2,6 +2,8 @@ const ORANGE = '#FAA300';
 const PINK = '#FF64CB';
 const BACKGROUND = '#FFFFFF';
 const PERSON_TINT = '#CFCFCF'; // stand-in body colour used only in ?demo mode (no webcam)
+const BURN_PINK = '#FF2E88';   // hot, "painful" pink used for the jellyfish burn
+const BURN_RED = '#FF2A1E';    // red-hot core of the burn
 
 const SAMPLE = 4;      // grid step used to sample the body outline
 const SQUARE = SAMPLE; // drawn square size for silhouette cells (demo person / dissolve)
@@ -11,13 +13,15 @@ const SEGMENT_INTERVAL = 90;  // ms between BodyPix calls
 const SMOOTHING = 0.28;       // body-center + cell smoothing
 
 // --- Catch game tuning ---
-const GAME_DIFFICULTY_RAMP = 55000; // ms to reach max difficulty
-const EMIT_INTERVAL_START = 750;    // ms between block bursts at the start
-const EMIT_INTERVAL_END = 260;      // ms between block bursts at max difficulty
-const BLOCK_SPEED_MIN = 1.5;        // outward speed at easy difficulty
-const BLOCK_SPEED_MAX = 3.2;        // outward speed at max difficulty
-const CATCH_RADIUS = 46;            // how close a hand must be to grab a block
-const ABSORB_RADIUS = 24;           // distance to body center where a caught block is absorbed
+const GAME_DIFFICULTY_RAMP = 70000; // ms to reach max difficulty (gentler ramp)
+const EMIT_INTERVAL_START = 800;    // ms between block bursts at the start
+const EMIT_INTERVAL_END = 280;      // ms between block bursts at max difficulty
+const BLOCK_SPEED_MIN = 1.2;        // outward speed at easy difficulty
+const BLOCK_SPEED_MAX = 2.6;        // outward speed at max difficulty
+const CATCH_RADIUS = 72;            // how close a hand must be to grab a block (forgiving)
+const MAGNET_RADIUS = 130;          // nearby hand gently attracts blocks so catching feels intuitive
+const MAGNET_PULL = 0.4;            // strength of that magnet assist
+const ABSORB_RADIUS = 26;           // distance to body center where a caught block is absorbed
 const CAUGHT_PULL = 0.45;           // acceleration of a caught block back toward the body
 const CAUGHT_FRICTION = 0.88;       // damping while reeling a caught block in
 
@@ -128,6 +132,7 @@ let bodyCenter = { x: width / 2, y: height / 2 };
 let particles = [];        // flying / caught yellow blocks (the game pieces)
 let dissolveParticles = [];
 let pinks = [];
+let burns = [];            // short-lived "burn" bursts where a jellyfish hit the body
 let hands = [];            // current hand positions (wrists), in canvas/mirrored coords
 
 let personDetected = false;
@@ -400,6 +405,19 @@ function updateBlocks(dt, now){
         }
       }
       if(b.state === 'flying'){
+        // magnet assist: a nearby hand gently pulls the block toward it so
+        // catching feels intuitive instead of requiring a pixel-perfect touch.
+        let nearHand = null, nearDist = MAGNET_RADIUS;
+        for(const h of hands){
+          const d = Math.hypot(h.x - b.x, h.y - b.y);
+          if(d < nearDist){ nearDist = d; nearHand = h; }
+        }
+        if(nearHand){
+          const dx = nearHand.x - b.x, dy = nearHand.y - b.y, m = Math.hypot(dx, dy) || 1;
+          const strength = MAGNET_PULL * (1 - nearDist / MAGNET_RADIUS);
+          b.vx += (dx / m) * strength;
+          b.vy += (dy / m) * strength;
+        }
         b.x += b.vx * dt / 16;
         b.y += b.vy * dt / 16;
         if(b.x < -margin || b.x > width + margin || b.y < -margin || b.y > height + margin){
@@ -635,7 +653,10 @@ function checkPinkCollision(circle){
   circle.vx = 0; circle.vy = 0;
   playTouchSound();
 
-  const spread = 3;
+  // a glowing "burn" burst at the point of contact
+  burns.push({ x: cell.dispX, y: cell.dispY, born: now, duration: 620, maxR: 30 + Math.random() * 22 });
+
+  const spread = 5; // wider, angrier scorch across the body
   for(let sy = -spread; sy <= spread; sy++){
     for(let sx = -spread; sx <= spread; sx++){
       const neighbor = silhouetteMap.get((cell.relKeyX + sx) + "_" + (cell.relKeyY + sy));
@@ -645,6 +666,7 @@ function checkPinkCollision(circle){
           const intensity = 1 - (dist / (spread + 0.2));
           neighbor.hitStart = now;
           neighbor.hitDuration = PINK_FLASH_MIN + intensity * (PINK_FLASH_MAX - PINK_FLASH_MIN);
+          neighbor.hitIntensity = intensity;
         }
       }
     }
@@ -653,8 +675,16 @@ function checkPinkCollision(circle){
 
 function drawPinks(){
   ctx.save();
-  ctx.fillStyle = PINK;
   for(const c of pinks){
+    if(c.attached){
+      // attached jellyfish glow hot, as if searing the body
+      ctx.shadowColor = BURN_PINK;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = BURN_PINK;
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = PINK;
+    }
     ctx.beginPath();
     ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
     ctx.fill();
@@ -682,11 +712,56 @@ function drawPersonHits(){
     if(obj.hitStart && obj.hitDuration){
       const t = (now - obj.hitStart) / obj.hitDuration;
       if(t < 1){
-        ctx.globalAlpha = 1 - Math.min(1, t);
-        ctx.fillStyle = PINK;
-        ctx.fillRect(obj.dispX - SQUARE / 2, obj.dispY - SQUARE / 2, SQUARE, SQUARE);
+        const fade = 1 - Math.min(1, t);
+        const intensity = obj.hitIntensity || 0.5;
+        // hot-pink scorch that spills a bit beyond the cell...
+        const s = SQUARE * (1.4 + intensity);
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = BURN_PINK;
+        ctx.fillRect(obj.dispX - s / 2, obj.dispY - s / 2, s, s);
+        // ...with a red-hot core near the point of impact
+        if(intensity > 0.6){
+          ctx.globalAlpha = fade * intensity;
+          ctx.fillStyle = BURN_RED;
+          ctx.fillRect(obj.dispX - SQUARE / 2, obj.dispY - SQUARE / 2, SQUARE, SQUARE);
+        }
       }
     }
+  }
+  ctx.restore();
+}
+
+// Expanding, glowing burn burst at each jellyfish contact point.
+function updateBurns(now){
+  for(let i = burns.length - 1; i >= 0; i--){
+    if(now - burns[i].born > burns[i].duration) burns.splice(i, 1);
+  }
+}
+
+function drawBurns(now){
+  ctx.save();
+  for(const b of burns){
+    const t = (now - b.born) / b.duration;
+    if(t >= 1) continue;
+    const fade = 1 - t;
+    const r = b.maxR * (0.3 + t * 0.95);
+    const g = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, r);
+    g.addColorStop(0, `rgba(255,255,255,${0.9 * fade})`);
+    g.addColorStop(0.30, `rgba(255,42,30,${0.85 * fade})`);   // red-hot
+    g.addColorStop(0.65, `rgba(255,46,136,${0.55 * fade})`);  // hot pink
+    g.addColorStop(1, 'rgba(255,46,136,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    // sharp shock ring travelling outward
+    ctx.globalAlpha = fade;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = BURN_PINK;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r * 1.12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }
@@ -732,6 +807,7 @@ function startGame(now){
   particles = [];
   dissolveParticles = [];
   pinks = [];
+  burns = [];
   pinkEnabled = false;
   pinkPhaseStart = null;
   score = 0;
@@ -748,6 +824,7 @@ function resetScene(){
   particles = [];
   dissolveParticles = [];
   pinks = [];
+  burns = [];
   pinkEnabled = false;
   pinkPhaseStart = null;
 }
@@ -897,6 +974,8 @@ function frame(){
     }
     updatePinks(dt);
     drawPinks();
+    updateBurns(now);
+    drawBurns(now);
 
     drawHands();
   }
