@@ -153,8 +153,74 @@ let mouse = { x: width / 2, y: height / 2, active: false };
 /* Setup                                                               */
 /* ------------------------------------------------------------------ */
 
+// Show a readable message on screen (creates the #hint box if it is missing).
+function showMessage(msg){
+  let el = document.getElementById('hint');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'hint';
+    document.body.appendChild(el);
+  }
+  el.style.position = 'fixed';
+  el.style.left = '50%';
+  el.style.bottom = '16px';
+  el.style.transform = 'translateX(-50%)';
+  el.style.maxWidth = '92vw';
+  el.style.background = 'rgba(0,0,0,0.78)';
+  el.style.color = '#fff';
+  el.style.padding = '10px 16px';
+  el.style.borderRadius = '10px';
+  el.style.font = '14px Arial, sans-serif';
+  el.style.direction = 'rtl';
+  el.style.textAlign = 'center';
+  el.style.zIndex = '20';
+  el.textContent = msg;
+}
+
+function loadScript(src){
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('נכשלה טעינת ' + src + ' (בדקי חיבור אינטרנט)'));
+    document.head.appendChild(s);
+  });
+}
+
+// Load TensorFlow.js + BodyPix from a CDN if index.html did not already include them.
+async function ensureBodyPix(){
+  if(typeof bodyPix !== 'undefined') return;
+  await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.4.0/dist/tf.min.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0/dist/body-pix.min.js');
+  if(typeof bodyPix === 'undefined') throw new Error('BodyPix לא נטען');
+}
+
+function setupCanvas(){
+  canvas = document.getElementById('canvas');
+  if(!canvas){
+    canvas = document.createElement('canvas');
+    canvas.id = 'canvas';
+    document.body.appendChild(canvas);
+  }
+  canvas.width = width; canvas.height = height;
+  canvas.style.width = '100%'; canvas.style.height = '100%';
+  ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+}
+
 async function setupCamera(){
   video = document.getElementById('video');
+  if(!video){
+    video = document.createElement('video');
+    video.id = 'video';
+    video.style.display = 'none';
+    document.body.appendChild(video);
+  }
+  video.playsInline = true;
+  video.muted = true;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    throw new Error('גישה למצלמה חסומה — יש לפתוח דרך http://localhost או https (לא file://)');
+  }
   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
   video.srcObject = stream;
   await video.play();
@@ -162,14 +228,7 @@ async function setupCamera(){
   height = video.videoHeight || height;
   video.width = width; video.height = height;
   video.style.display = 'none';
-}
-
-function setupCanvas(){
-  canvas = document.getElementById('canvas');
-  canvas.width = width; canvas.height = height;
-  canvas.style.width = '100%'; canvas.style.height = '100%';
-  ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  if(canvas){ canvas.width = width; canvas.height = height; } // match real camera resolution
 }
 
 async function loadModel(){
@@ -893,16 +952,17 @@ async function segmentationLoop(){
   }
 
   try{
-    await setupCamera();
     setupCanvas();
-    await loadModel();
+    frame(); // start rendering (blank white) so the page is responsive while the camera/model load
     window.addEventListener('pointerdown', ensureAudio, { once: true });
-    frame();
+    await setupCamera();
+    await ensureBodyPix();
+    await loadModel();
     segmentationLoop();
   }catch(e){
     console.error(e);
-    const hint = document.getElementById('hint');
-    if(hint) hint.textContent = 'לא ניתן לגשת למצלמה. אפשר לבדוק את המשחק במצב הדגמה: index.html?demo=1';
+    showMessage('לא ניתן להפעיל: ' + (e && e.message ? e.message : e) +
+      ' — ודאי שהעמוד רץ דרך http://localhost:8000 (לא file://) ושאישרת גישה למצלמה. לבדיקה ללא מצלמה הוסיפי ?demo=1 לכתובת.');
   }
 })();
 
